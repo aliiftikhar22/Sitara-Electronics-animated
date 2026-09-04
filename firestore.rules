@@ -1,0 +1,61 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isSignedIn() &&
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    }
+
+    // Products: anyone can browse the shop; only an admin can add/edit/delete.
+    match /products/{productId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Categories: same pattern as products, public read / admin write.
+    match /categories/{categoryId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Orders: a customer can create an order and look up ONE order by its
+    // exact ID (how "track my order" works without exposing everyone else's
+    // orders). A signed-in customer can list only orders tagged with their
+    // own uid (order history); listing every order, changing status, or
+    // deleting requires an admin.
+    match /orders/{orderId} {
+      allow get: if true;
+      allow list: if isAdmin() ||
+        (isSignedIn() && resource.data.uid == request.auth.uid);
+      allow create: if true;
+      allow update, delete: if isAdmin();
+    }
+
+    // Users: a signed-in user can read/create their own profile (role
+    // always defaults to 'customer' at signup — see lib/auth.ts). Only an
+    // admin can change roles or read/write other users' profiles.
+    match /users/{uid} {
+      allow read: if isSignedIn() && (request.auth.uid == uid || isAdmin());
+      allow create: if isSignedIn() && request.auth.uid == uid &&
+        request.resource.data.role == 'customer';
+      allow update: if isAdmin() ||
+        (isSignedIn() && request.auth.uid == uid &&
+          request.resource.data.role == resource.data.role);
+      allow delete: if isAdmin();
+    }
+
+    // Reviews: only approved reviews are publicly visible; a signed-in
+    // customer can submit one; only an admin can approve/delete.
+    match /reviews/{reviewId} {
+      allow read: if resource.data.approved == true || isAdmin();
+      allow create: if isSignedIn();
+      allow update, delete: if isAdmin();
+    }
+  }
+}
